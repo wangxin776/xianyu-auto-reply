@@ -1,71 +1,73 @@
-# 闲鱼自动回复系统 - 上游代码同步脚本
-# 用于同步原作者 zhinianboke/xianyu-auto-reply 的最新代码
+# Sync upstream repository script
+# Sync latest code from zhinianboke/xianyu-auto-reply
 
-Write-Host "🚀 开始同步原作者最新代码..." -ForegroundColor Green
+Write-Host "Starting sync with upstream repository..." -ForegroundColor Green
 
-# 保存当前分支
+# Save current branch
 $currentBranch = git branch --show-current
-Write-Host "📍 当前分支: $currentBranch" -ForegroundColor Yellow
+Write-Host "Current branch: $currentBranch" -ForegroundColor Yellow
 
-# 检查工作区是否干净
+# Check if working directory is clean
 $status = git status --porcelain
 if ($status) {
-    Write-Host "⚠️  工作区有未提交的更改，请先提交或暂存:" -ForegroundColor Red
+    Write-Host "Working directory has uncommitted changes. Please commit or stash first:" -ForegroundColor Red
     git status --short
-    Write-Host "💡 建议执行: git add . && git commit -m '保存当前工作'" -ForegroundColor Cyan
+    Write-Host "Suggestion: git add . && git commit -m 'Save current work'" -ForegroundColor Cyan
     exit 1
 }
 
 try {
-    # 切换到main分支
-    Write-Host "🔄 切换到main分支..." -ForegroundColor Blue
+    # Switch to main branch
+    Write-Host "Switching to main branch..." -ForegroundColor Blue
     git checkout main
-    
-    # 拉取原作者最新代码
-    Write-Host "📥 从原作者仓库拉取最新代码..." -ForegroundColor Blue
+
+    # Fetch latest code from upstream
+    Write-Host "Fetching latest code from upstream..." -ForegroundColor Blue
     git fetch upstream
-    
-    # 检查是否有新的更新
+
+    # Check if there are new updates
     $behind = git rev-list --count HEAD..upstream/main
     if ($behind -eq "0") {
-        Write-Host "✅ 已经是最新版本，无需同步" -ForegroundColor Green
+        Write-Host "Already up to date, no sync needed" -ForegroundColor Green
     } else {
-        Write-Host "📦 发现 $behind 个新提交，开始合并..." -ForegroundColor Yellow
-        
-        # 合并原作者的最新代码
+        Write-Host "Found $behind new commits, starting merge..." -ForegroundColor Yellow
+
+        # Merge upstream changes
         git merge upstream/main --no-edit
-        
-        # 推送到您的fork仓库
-        Write-Host "📤 推送更新到您的fork仓库..." -ForegroundColor Blue
+
+        # Push to your fork
+        Write-Host "Pushing updates to your fork..." -ForegroundColor Blue
         git push origin main
-        
-        Write-Host "✅ main分支同步完成" -ForegroundColor Green
+
+        Write-Host "Main branch sync completed" -ForegroundColor Green
     }
-    
-    # 切换回开发分支
-    Write-Host "🔄 切换回开发分支: $currentBranch" -ForegroundColor Blue
+
+    # Switch back to development branch
+    Write-Host "Switching back to development branch: $currentBranch" -ForegroundColor Blue
     git checkout $currentBranch
-    
-    # 检查开发分支是否需要合并main的更新
+
+    # Check if development branch needs main updates
     $behindMain = git rev-list --count HEAD..main
     if ($behindMain -eq "0") {
-        Write-Host "✅ 开发分支已经是最新的" -ForegroundColor Green
+        Write-Host "Development branch is up to date" -ForegroundColor Green
     } else {
-        Write-Host "📦 将main分支的更新合并到开发分支..." -ForegroundColor Yellow
+        Write-Host "Merging main branch updates to development branch..." -ForegroundColor Yellow
         git merge main --no-edit
-        Write-Host "✅ 开发分支更新完成" -ForegroundColor Green
+        Write-Host "Development branch update completed" -ForegroundColor Green
     }
-    
-    Write-Host "`n🎉 同步完成！" -ForegroundColor Green
-    Write-Host "📍 当前分支: $currentBranch" -ForegroundColor Yellow
-    Write-Host "✨ 已合并原作者最新代码" -ForegroundColor Green
-    
-    # 显示最新的几个提交
-    Write-Host "`n📋 最新提交记录:" -ForegroundColor Cyan
+
+    Write-Host ""
+    Write-Host "Sync completed!" -ForegroundColor Green
+    Write-Host "Current branch: $currentBranch" -ForegroundColor Yellow
+    Write-Host "Latest upstream code merged" -ForegroundColor Green
+
+    # Show latest commits
+    Write-Host ""
+    Write-Host "Latest commit history:" -ForegroundColor Cyan
     git log --oneline -5
-    
+
 } catch {
-    Write-Host "❌ 同步过程中出现错误: $($_.Exception.Message)" -ForegroundColor Red
-    Write-Host "🔧 请手动检查并解决冲突" -ForegroundColor Yellow
+    Write-Host "Error during sync: $($_.Exception.Message)" -ForegroundColor Red
+    Write-Host "Please check and resolve conflicts manually" -ForegroundColor Yellow
     exit 1
 }
