@@ -99,6 +99,10 @@ class XianyuLive:
         self.last_notification_time = {}  # 记录每种通知类型的最后发送时间
         self.notification_cooldown = 300  # 5分钟内不重复发送相同类型的通知
 
+        # Token刷新失败计数器
+        self.token_failure_count = 0  # 连续Token刷新失败次数
+        self.max_failure_count = 5  # 连续失败阈值，超过此数值发送严重警告
+
         # 自动发货防重复机制
         self.last_delivery_time = {}  # 记录每个商品的最后发货时间
         self.delivery_cooldown = 60  # 1分钟内不重复发货
@@ -214,16 +218,22 @@ class XianyuLive:
                                 new_token = res_json['data']['accessToken']
                                 self.current_token = new_token
                                 self.last_token_refresh_time = time.time()
+                                # 重置失败计数器
+                                self.token_failure_count = 0
                                 logger.info(f"【{self.cookie_id}】Token刷新成功")
                                 return new_token
-                            
-                    logger.error(f"【{self.cookie_id}】Token刷新失败: {res_json}")
+
+                    # Token刷新失败，增加失败计数
+                    self.token_failure_count += 1
+                    logger.error(f"【{self.cookie_id}】Token刷新失败 (第{self.token_failure_count}次): {res_json}")
                     # 发送Token刷新失败通知
                     await self.send_token_refresh_notification(f"Token刷新失败: {res_json}", "token_refresh_failed")
                     return None
 
         except Exception as e:
-            logger.error(f"Token刷新异常: {self._safe_str(e)}")
+            # Token刷新异常，增加失败计数
+            self.token_failure_count += 1
+            logger.error(f"Token刷新异常 (第{self.token_failure_count}次): {self._safe_str(e)}")
             # 发送Token刷新异常通知
             await self.send_token_refresh_notification(f"Token刷新异常: {str(e)}", "token_refresh_exception")
             return None
@@ -954,7 +964,7 @@ class XianyuLive:
         try:
             import aiohttp
             import json
-            from config import config
+            from config import config as global_config
 
             # 解析配置（Webhook URL）
             webhook_url = config.strip()
@@ -968,7 +978,7 @@ class XianyuLive:
                 return
 
             # 获取飞书配置
-            feishu_config = config.get('NOTIFICATION', {}).get('feishu', {})
+            feishu_config = global_config.get('NOTIFICATION', {}).get('feishu', {})
             msg_type = feishu_config.get('default_msg_type', 'post')
             timeout = feishu_config.get('timeout', 10)
 
@@ -1030,11 +1040,22 @@ class XianyuLive:
                 logger.debug(f"检测到正常的令牌过期，跳过通知: {error_message}")
                 return
 
+            # 判断错误严重程度
+            is_critical = self._is_critical_error(error_message)
+
+            # 根据错误严重程度调整冷却时间
+            cooldown_time = self.notification_cooldown
+            if is_critical:
+                cooldown_time = 60  # 严重错误1分钟冷却
+            elif self.token_failure_count >= self.max_failure_count:
+                cooldown_time = 120  # 连续失败2分钟冷却
+                notification_type = "token_critical_failure"  # 使用不同的通知类型
+
             # 检查是否在冷却期内
             current_time = time.time()
             last_time = self.last_notification_time.get(notification_type, 0)
 
-            if current_time - last_time < self.notification_cooldown:
+            if current_time - last_time < cooldown_time:
                 logger.debug(f"通知在冷却期内，跳过发送: {notification_type} (距离上次 {int(current_time - last_time)} 秒)")
                 return
 
@@ -1047,16 +1068,37 @@ class XianyuLive:
                 logger.debug("未配置消息通知，跳过Token刷新通知")
                 return
 
-            # 构造通知消息
-            notification_msg = f"""🔴 闲鱼账号Token刷新异常
+            # 根据错误类型构造不同的通知消息
+            if is_critical:
+                notification_msg = f"""🚨 闲鱼账号严重异常
 
 账号ID: {self.cookie_id}
 异常时间: {time.strftime('%Y-%m-%d %H:%M:%S', time.localtime())}
+异常类型: 严重Token错误
+异常信息: {error_message}
+
+⚠️ 这是一个严重错误，可能需要人工干预！
+建议立即检查账号状态和Cookie配置。"""
+            elif self.token_failure_count >= self.max_failure_count:
+                notification_msg = f"""🔴 闲鱼账号连续失败警告
+
+账号ID: {self.cookie_id}
+异常时间: {time.strftime('%Y-%m-%d %H:%M:%S', time.localtime())}
+连续失败次数: {self.token_failure_count}
+最新异常: {error_message}
+
+⚠️ Token已连续失败{self.token_failure_count}次，请检查Cookie是否过期！"""
+            else:
+                notification_msg = f"""🔴 闲鱼账号Token刷新异常
+
+账号ID: {self.cookie_id}
+异常时间: {time.strftime('%Y-%m-%d %H:%M:%S', time.localtime())}
+失败次数: {self.token_failure_count}
 异常信息: {error_message}
 
 请检查账号Cookie是否过期，如有需要请及时更新Cookie配置。"""
 
-            logger.info(f"准备发送Token刷新异常通知: {self.cookie_id}")
+            logger.info(f"准备发送Token刷新异常通知: {self.cookie_id} (类型: {notification_type})")
 
             # 发送通知到各个渠道
             notification_sent = False
@@ -1090,28 +1132,45 @@ class XianyuLive:
 
     def _is_normal_token_expiry(self, error_message: str) -> bool:
         """检查是否是正常的令牌过期或其他不需要通知的情况"""
-        # 不需要发送通知的关键词
-        no_notification_keywords = [
-            # 正常的令牌过期
-            'FAIL_SYS_TOKEN_EXOIRED::令牌过期',
-            'FAIL_SYS_TOKEN_EXPIRED::令牌过期',
-            'FAIL_SYS_TOKEN_EXOIRED',
-            'FAIL_SYS_TOKEN_EXPIRED',
-            '令牌过期',
-            # Session过期（正常情况）
-            'FAIL_SYS_SESSION_EXPIRED::Session过期',
-            'FAIL_SYS_SESSION_EXPIRED',
-            'Session过期',
-            # Token定时刷新失败（会自动重试）
-            'Token定时刷新失败，将自动重试',
-            'Token定时刷新失败'
+        # 严重错误，需要立即通知的关键词
+        critical_error_keywords = [
+            'RGV587_ERROR::SM::哎哟喂,被挤爆啦',  # 服务器过载/验证码问题
+            'FAIL_SYS_USER_VALIDATE',  # 用户验证失败
+            'punish',  # 惩罚相关
+            'captcha',  # 验证码相关
         ]
 
-        # 检查错误消息是否包含不需要通知的关键词
-        for keyword in no_notification_keywords:
+        # 检查是否是严重错误
+        for keyword in critical_error_keywords:
+            if keyword in error_message:
+                return False  # 严重错误，不过滤，需要发送通知
+
+        # 只过滤真正的"正常"情况
+        normal_keywords = [
+            # 仅过滤定时刷新失败（会自动重试的情况）
+            'Token定时刷新失败，将自动重试',
+        ]
+
+        # 检查错误消息是否包含正常情况的关键词
+        for keyword in normal_keywords:
             if keyword in error_message:
                 return True
 
+        return False  # 默认不过滤，发送通知
+
+    def _is_critical_error(self, error_message: str) -> bool:
+        """检查是否是严重错误，需要立即通知"""
+        critical_keywords = [
+            'RGV587_ERROR::SM::哎哟喂,被挤爆啦',  # 服务器过载/验证码问题
+            'FAIL_SYS_USER_VALIDATE',  # 用户验证失败
+            'punish',  # 惩罚相关
+            'captcha',  # 验证码相关
+            'pureCaptcha',  # 纯验证码
+        ]
+
+        for keyword in critical_keywords:
+            if keyword in error_message:
+                return True
         return False
 
     async def send_delivery_failure_notification(self, send_user_name: str, send_user_id: str, item_id: str, error_message: str):
