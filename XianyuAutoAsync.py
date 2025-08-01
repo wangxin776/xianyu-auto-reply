@@ -909,6 +909,8 @@ class XianyuLive:
                 try:
                     if channel_type == 'qq':
                         await self._send_qq_notification(channel_config, notification_msg)
+                    elif channel_type == 'feishu':
+                        await self._send_feishu_notification(channel_config, notification_msg)
                     else:
                         logger.warning(f"不支持的通知渠道类型: {channel_type}")
 
@@ -946,6 +948,79 @@ class XianyuLive:
 
         except Exception as e:
             logger.error(f"发送QQ通知异常: {self._safe_str(e)}")
+
+    async def _send_feishu_notification(self, config: str, message: str):
+        """发送飞书通知"""
+        try:
+            import aiohttp
+            import json
+            from config import config
+
+            # 解析配置（Webhook URL）
+            webhook_url = config.strip()
+            if not webhook_url:
+                logger.warning("飞书通知配置为空")
+                return
+
+            # 验证URL格式
+            if not webhook_url.startswith('https://open.feishu.cn/open-apis/bot/v2/hook/'):
+                logger.warning(f"飞书Webhook URL格式不正确: {webhook_url}")
+                return
+
+            # 获取飞书配置
+            feishu_config = config.get('NOTIFICATION', {}).get('feishu', {})
+            msg_type = feishu_config.get('default_msg_type', 'post')
+            timeout = feishu_config.get('timeout', 10)
+
+            # 构建飞书消息格式
+            if msg_type == 'text':
+                # 纯文本格式
+                payload = {
+                    "msg_type": "text",
+                    "content": {
+                        "text": message
+                    }
+                }
+            else:
+                # 富文本格式（默认）
+                payload = {
+                    "msg_type": "post",
+                    "content": {
+                        "post": {
+                            "zh_cn": {
+                                "title": "闲鱼通知",
+                                "content": [
+                                    [
+                                        {
+                                            "tag": "text",
+                                            "text": message
+                                        }
+                                    ]
+                                ]
+                            }
+                        }
+                    }
+                }
+
+            # 发送POST请求
+            async with aiohttp.ClientSession() as session:
+                async with session.post(
+                    webhook_url,
+                    json=payload,
+                    headers={"Content-Type": "application/json"},
+                    timeout=timeout
+                ) as response:
+                    if response.status == 200:
+                        result = await response.json()
+                        if result.get('code') == 0:
+                            logger.info("飞书通知发送成功")
+                        else:
+                            logger.warning(f"飞书通知发送失败: {result.get('msg', '未知错误')}")
+                    else:
+                        logger.warning(f"飞书通知发送失败: HTTP {response.status}")
+
+        except Exception as e:
+            logger.error(f"发送飞书通知异常: {self._safe_str(e)}")
 
     async def send_token_refresh_notification(self, error_message: str, notification_type: str = "token_refresh"):
         """发送Token刷新异常通知（带防重复机制）"""
@@ -995,6 +1070,9 @@ class XianyuLive:
                 try:
                     if channel_type == 'qq':
                         await self._send_qq_notification(channel_config, notification_msg)
+                        notification_sent = True
+                    elif channel_type == 'feishu':
+                        await self._send_feishu_notification(channel_config, notification_msg)
                         notification_sent = True
                     else:
                         logger.warning(f"不支持的通知渠道类型: {channel_type}")
@@ -1066,6 +1144,9 @@ class XianyuLive:
                     if channel_type == 'qq':
                         await self._send_qq_notification(channel_config, notification_message)
                         logger.info(f"已发送自动发货通知到QQ: {channel_config}")
+                    elif channel_type == 'feishu':
+                        await self._send_feishu_notification(channel_config, notification_message)
+                        logger.info(f"已发送自动发货通知到飞书: {channel_config}")
 
         except Exception as e:
             logger.error(f"发送自动发货通知异常: {self._safe_str(e)}")

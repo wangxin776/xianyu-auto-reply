@@ -849,7 +849,7 @@ class DefaultReplyIn(BaseModel):
 
 class NotificationChannelIn(BaseModel):
     name: str
-    type: str = "qq"
+    type: str = "qq"  # qq 或 feishu
     config: str
 
 
@@ -1091,6 +1091,18 @@ def create_notification_channel(channel_data: NotificationChannelIn, current_use
     """创建通知渠道"""
     from db_manager import db_manager
     try:
+        # 验证通知渠道类型
+        if channel_data.type not in ['qq', 'feishu']:
+            raise HTTPException(status_code=400, detail="不支持的通知渠道类型，仅支持 qq 或 feishu")
+
+        # 验证配置格式
+        if channel_data.type == 'feishu':
+            if not channel_data.config.startswith('https://open.feishu.cn/open-apis/bot/v2/hook/'):
+                raise HTTPException(status_code=400, detail="飞书Webhook URL格式不正确")
+        elif channel_data.type == 'qq':
+            if not channel_data.config.strip().isdigit():
+                raise HTTPException(status_code=400, detail="QQ号码格式不正确")
+
         user_id = current_user['user_id']
         channel_id = db_manager.create_notification_channel(
             channel_data.name,
@@ -1099,6 +1111,8 @@ def create_notification_channel(channel_data: NotificationChannelIn, current_use
             user_id
         )
         return {'msg': 'notification channel created', 'id': channel_id}
+    except HTTPException:
+        raise
     except Exception as e:
         raise HTTPException(status_code=400, detail=str(e))
 
